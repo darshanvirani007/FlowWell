@@ -20,6 +20,29 @@
 
   const menuButton = document.querySelector('.menu-toggle');
   const navigation = document.querySelector('.main-nav');
+  const siteHeader = document.querySelector('.site-header');
+  if (siteHeader) {
+    let hostObserver;
+    let observedHost;
+    const syncExtensionNotch = () => {
+      const host = document.getElementById('flowwell-extension-root');
+      if (host !== observedHost) {
+        hostObserver?.disconnect();
+        observedHost = host;
+        if (host) {
+          hostObserver = new MutationObserver(syncExtensionNotch);
+          hostObserver.observe(host, { attributes: true, attributeFilter: ['data-flowwell-position', 'data-flowwell-visible'] });
+        }
+      }
+      const visible = Boolean(host) && (host.dataset.flowwellVisible == null || host.dataset.flowwellVisible === 'true');
+      const position = host?.dataset.flowwellPosition;
+      document.body.classList.toggle('flowwell-notch-present', visible);
+      document.body.classList.toggle('flowwell-notch-right', visible && position === 'right');
+      document.body.classList.toggle('flowwell-notch-center', visible && position === 'center');
+    };
+    syncExtensionNotch();
+    new MutationObserver(syncExtensionNotch).observe(document.documentElement, { childList: true });
+  }
   if (menuButton && navigation) {
     menuButton.addEventListener('click', () => {
       const open = menuButton.getAttribute('aria-expanded') !== 'true';
@@ -30,6 +53,29 @@
       menuButton.setAttribute('aria-expanded', 'false');
       navigation.classList.remove('open');
     }));
+  }
+
+  // Keep the current section visible in the primary navigation.
+  if (navigation) {
+    const navLinks = [...navigation.querySelectorAll('a[href^="#"]')];
+    const markActive = (id) => navLinks.forEach((link) => {
+      const active = link.getAttribute('href') === `#${id}`;
+      link.classList.toggle('is-active', active);
+      if (active) link.setAttribute('aria-current', 'location');
+      else link.removeAttribute('aria-current');
+    });
+    if (location.pathname === '/support' || location.pathname === '/support/') {
+      navigation.querySelector('a[href="/support"]')?.setAttribute('aria-current', 'page');
+    } else if ('IntersectionObserver' in window) {
+      const sections = navLinks.map((link) => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+      const sectionObserver = new IntersectionObserver((entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible) markActive(visible.target.id);
+      }, { rootMargin: '-22% 0px -62% 0px', threshold: [0, .1, .3, .6] });
+      sections.forEach((section) => sectionObserver.observe(section));
+      const initial = location.hash.slice(1);
+      if (initial) markActive(initial);
+    }
   }
 
   const states = {
@@ -52,7 +98,80 @@
     workout: ['A SMALL CHECK-IN', 'Ready when you are.', 'A little exercise, at your pace.'],
   };
   let activeMode = 'friendly';
+  let activeTheme = 'light';
   let activeState = 'reminder';
+  const plannerShots = {
+    friendly: {
+      light: { src: '/screenshots/flowwell-friendly-planner.png?v=20261030-1030day', alt: 'FlowWell day planner in Friendly light mode, showing a weekly plan, daily summary, and routine list' },
+      dark: { src: '/screenshots/flowwell-friendly-planner-dark.png?v=20261030-1030day', alt: 'FlowWell day planner in Friendly dark mode, showing a weekly plan, daily summary, and routine list' },
+    },
+    gamified: {
+      light: { src: '/screenshots/flowwell-gamified-planner.png?v=20261030-1030day', alt: 'FlowWell day planner in Gamified light mode, showing a weekly plan, daily summary, and growth progress' },
+      dark: { src: '/screenshots/flowwell-gamified-planner-dark.png?v=20261030-1030day', alt: 'FlowWell day planner in Gamified dark mode, showing a weekly plan, daily summary, and growth progress' },
+    },
+    workout: {
+      light: { src: '/screenshots/flowwell-workout-planner.png?v=20261030-1030day', alt: 'FlowWell day planner in Workout light mode, showing a weekly plan, exercise summary, and routines' },
+      dark: { src: '/screenshots/flowwell-workout-planner-dark.png?v=20261030-1030day', alt: 'FlowWell day planner in Workout dark mode, showing a weekly plan, exercise summary, and routines' },
+    },
+  };
+
+  function setHeroMode(mode) {
+    const image = document.querySelector('#planner-shot');
+    const visual = image?.closest('.hero-visual');
+    const shot = plannerShots[mode]?.[activeTheme];
+    if (!image || !visual || !shot) return;
+    activeMode = mode;
+    visual.dataset.mode = mode;
+    document.querySelectorAll('.shot-mode').forEach((button) => {
+      const selected = button.dataset.shotMode === mode;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    const label = document.querySelector('#shot-mode-name');
+    if (label) label.textContent = `${mode[0].toUpperCase()}${mode.slice(1)} · ${activeTheme[0].toUpperCase()}${activeTheme.slice(1)}`;
+    const openButton = document.querySelector('.product-shot-open');
+    if (openButton) openButton.setAttribute('aria-label', `Enlarge ${mode} ${activeTheme} mode planner screenshot`);
+    const lightboxImage = document.querySelector('#planner-shot-large');
+    const lightbox = document.querySelector('#planner-lightbox');
+    if (lightbox) lightbox.dataset.theme = activeTheme;
+    if (lightboxImage) {
+      lightboxImage.src = shot.src;
+      lightboxImage.alt = shot.alt;
+    }
+    const lightboxCaption = document.querySelector('#shot-dialog-caption');
+    if (lightboxCaption) lightboxCaption.textContent = `${label?.textContent || mode} mode · Original extension screenshot`;
+    if (image.getAttribute('src') === shot.src) return;
+    if (reducedMotion) {
+      image.src = shot.src;
+      image.alt = shot.alt;
+      return;
+    }
+    image.classList.add('shot-changing');
+    window.setTimeout(() => {
+      const nextImage = new Image();
+      nextImage.onload = () => {
+        image.src = shot.src;
+        image.alt = shot.alt;
+        requestAnimationFrame(() => image.classList.remove('shot-changing'));
+      };
+      nextImage.onerror = () => image.classList.remove('shot-changing');
+      nextImage.src = shot.src;
+    }, 140);
+  }
+
+  function setHeroTheme(theme) {
+    if (!plannerShots[activeMode]?.[theme]) return;
+    activeTheme = theme;
+    const visual = document.querySelector('.hero-visual');
+    if (visual) visual.dataset.theme = theme;
+    document.querySelectorAll('.shot-theme').forEach((button) => {
+      const selected = button.dataset.shotTheme === theme;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    setHeroMode(activeMode);
+  }
+
 
   function iconMarkup(name, mode = activeMode, size = 14) {
     const iconSet = window.FlowWellIcons;
@@ -64,6 +183,7 @@
   }
 
   function hydrateProductIcons() {
+    document.querySelectorAll('.sequence-icon').forEach((node) => { node.innerHTML = iconMarkup(node.dataset.icon || 'custom', activeMode, 15); });
     document.querySelectorAll('.mood-mark').forEach((node) => { node.innerHTML = iconMarkup('mood', activeMode, 19); });
     document.querySelectorAll('.privacy-mark span').forEach((node) => { node.innerHTML = iconMarkup('mood', activeMode, 27); });
     document.querySelectorAll('.routine-icon').forEach((node) => {
@@ -88,7 +208,7 @@
     if (takeALook && takeALook.textContent.trim() === '↓') takeALook.innerHTML = iconMarkup('chevron', activeMode, 12);
     document.querySelectorAll('.chip-icon').forEach((node) => { node.innerHTML = iconMarkup('clock', activeMode, 16); });
     document.querySelectorAll('.chip-check').forEach((node) => { node.innerHTML = iconMarkup('check', activeMode, 15); });
-    document.querySelectorAll('.routine-spark,.ticker i,.install-flower').forEach((node) => { node.innerHTML = iconMarkup('sparkle', activeMode, 18); });
+    document.querySelectorAll('.routine-spark,.ticker i,.install-flower,.install-spark-field>span').forEach((node) => { node.innerHTML = iconMarkup('sparkle', activeMode, 18); });
     document.querySelectorAll('.plant-ornament').forEach((node) => { node.innerHTML = iconMarkup('mood', 'gamified', 30); });
     document.querySelectorAll('.faq-list summary span,.help-content summary span').forEach((node) => { node.innerHTML = iconMarkup('plus', activeMode, 14); });
     document.querySelectorAll('.routine-add').forEach((node) => { node.innerHTML = `${iconMarkup('plus', activeMode, 13)} &nbsp; Add a routine`; });
@@ -104,6 +224,7 @@
 
   function setNotchMode(mode) {
     activeMode = mode;
+    setHeroMode(mode);
     document.querySelectorAll('.notch-demo').forEach((notch) => {
       notch.classList.remove('friendly', 'gamified', 'workout');
       notch.classList.add(mode);
@@ -122,6 +243,12 @@
   function applyState(stateName) {
     activeState = stateName;
     const state = states[stateName];
+    document.querySelectorAll('.notch-demo').forEach((notch) => {
+      notch.classList.remove('state-enter');
+      void notch.offsetWidth;
+      notch.classList.add('state-enter');
+      window.setTimeout(() => notch.classList.remove('state-enter'), 520);
+    });
     document.querySelectorAll('.state-btn').forEach((button) => {
       const selected = button.dataset.state === stateName;
       button.classList.toggle('active', selected);
@@ -134,6 +261,7 @@
       notch.classList.toggle('collapsed', !state.expanded);
       notch.classList.toggle('focus-preview', state.focus);
       if (expanded) expanded.hidden = false;
+      if (expanded) expanded.setAttribute('aria-hidden', String(!state.expanded));
       if (capsule) capsule.setAttribute('aria-expanded', String(state.expanded));
       setText(notch, '.notch-title b', state.title);
       setText(notch, '.notch-title small', state.subtitle);
@@ -149,15 +277,7 @@
       setHtml(notch, '.notch-foot b', `Plan your day&nbsp; ${iconMarkup('arrow', activeMode, 12)}`);
       const chevron = notch.querySelector('.notch-chevron');
       if (chevron) chevron.innerHTML = iconMarkup('chevron', activeMode, 12);
-      if (state.focus) {
-        setText(notch, '.n-actions span:nth-child(2)', 'Finish session');
-        const third = notch.querySelector('.n-actions span:nth-child(3)');
-        if (third) third.hidden = true;
-      } else {
-        setText(notch, '.n-actions span:nth-child(2)', '15m');
-        const third = notch.querySelector('.n-actions span:nth-child(3)');
-        if (third) third.hidden = false;
-      }
+      setText(notch, '.n-actions span:nth-child(2)', state.focus ? 'Finish session' : 'Skip');
     });
     const hero = document.querySelector('#notch-demo');
     if (hero) {
@@ -172,6 +292,7 @@
       setText(hero, '.notch-foot span', state.footer);
       setText(hero, '.reminder-meta span:last-child', state.time);
       setText(hero, '.notch-actions span:first-child', state.action);
+      setText(hero, '.notch-actions span:nth-child(2)', state.focus ? 'Finish session' : 'Skip');
       const categoryLabel = state.focus ? 'FOCUS SESSION' : (activeMode === 'workout' ? 'EXERCISE' : 'MOVEMENT');
       setHtml(hero, '.reminder-meta span:first-child', `${iconMarkup(state.focus ? 'focus' : 'workout', activeMode, 12)} <span>${categoryLabel}</span>`);
       setHtml(hero, '.notch-actions span:first-child', state.action.includes('✓') ? `Finish ${iconMarkup('check', activeMode, 12)}` : state.action);
@@ -191,6 +312,15 @@
   }
 
   document.querySelectorAll('.state-btn').forEach((button) => button.addEventListener('click', () => applyState(button.dataset.state)));
+  const plannerDialog = document.querySelector('#planner-lightbox');
+  const plannerOpen = document.querySelector('.product-shot-open');
+  if (plannerDialog && plannerOpen) {
+    plannerOpen.addEventListener('click', () => plannerDialog.showModal());
+    plannerDialog.querySelector('.shot-dialog-close')?.addEventListener('click', () => plannerDialog.close());
+    plannerDialog.addEventListener('click', (event) => { if (event.target === plannerDialog) plannerDialog.close(); });
+  }
+  document.querySelectorAll('.shot-mode').forEach((button) => button.addEventListener('click', () => setNotchMode(button.dataset.shotMode)));
+  document.querySelectorAll('.shot-theme').forEach((button) => button.addEventListener('click', () => setHeroTheme(button.dataset.shotTheme)));
   document.querySelectorAll('.personality-select').forEach((button) => button.addEventListener('click', () => {
     setNotchMode(button.dataset.mode);
     document.querySelector('#notch-demo')?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
