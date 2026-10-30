@@ -115,6 +115,28 @@
     },
   };
 
+  // Warm all six real planner captures after the first screen has settled so
+  // mode and appearance changes swap from cache instead of waiting on a fetch.
+  const shotImageCache = new Map();
+  let shotChangeId = 0;
+  function preloadShot(src) {
+    if (!shotImageCache.has(src)) {
+      const promise = new Promise((resolve) => {
+        const preload = new Image();
+        preload.fetchPriority = 'low';
+        preload.onload = () => resolve(true);
+        preload.onerror = () => resolve(false);
+        preload.src = src;
+        if (preload.complete && preload.naturalWidth) resolve(true);
+      });
+      shotImageCache.set(src, promise);
+    }
+    return shotImageCache.get(src);
+  }
+  const warmPlannerShots = () => Object.values(plannerShots).flatMap((themes) => Object.values(themes)).forEach(({ src }) => preloadShot(src));
+  if ('requestIdleCallback' in window) window.requestIdleCallback(warmPlannerShots, { timeout: 1200 });
+  else window.setTimeout(warmPlannerShots, 500);
+
   function setHeroMode(mode) {
     const image = document.querySelector('#planner-shot');
     const visual = image?.closest('.hero-visual');
@@ -141,22 +163,15 @@
     const lightboxCaption = document.querySelector('#shot-dialog-caption');
     if (lightboxCaption) lightboxCaption.textContent = `${label?.textContent || mode} mode · Original extension screenshot`;
     if (image.getAttribute('src') === shot.src) return;
-    if (reducedMotion) {
+    const changeId = ++shotChangeId;
+    preloadShot(shot.src).then((loaded) => {
+      if (!loaded || changeId !== shotChangeId) return;
+      if (!reducedMotion) image.classList.add('shot-changing');
       image.src = shot.src;
       image.alt = shot.alt;
-      return;
-    }
-    image.classList.add('shot-changing');
-    window.setTimeout(() => {
-      const nextImage = new Image();
-      nextImage.onload = () => {
-        image.src = shot.src;
-        image.alt = shot.alt;
-        requestAnimationFrame(() => image.classList.remove('shot-changing'));
-      };
-      nextImage.onerror = () => image.classList.remove('shot-changing');
-      nextImage.src = shot.src;
-    }, 140);
+      if (reducedMotion) return;
+      requestAnimationFrame(() => requestAnimationFrame(() => image.classList.remove('shot-changing')));
+    });
   }
 
   function setHeroTheme(theme) {
@@ -319,8 +334,24 @@
     plannerDialog.querySelector('.shot-dialog-close')?.addEventListener('click', () => plannerDialog.close());
     plannerDialog.addEventListener('click', (event) => { if (event.target === plannerDialog) plannerDialog.close(); });
   }
-  document.querySelectorAll('.shot-mode').forEach((button) => button.addEventListener('click', () => setNotchMode(button.dataset.shotMode)));
-  document.querySelectorAll('.shot-theme').forEach((button) => button.addEventListener('click', () => setHeroTheme(button.dataset.shotTheme)));
+  document.querySelectorAll('.shot-mode').forEach((button) => {
+    const warmModeShot = () => {
+      const shot = plannerShots[button.dataset.shotMode]?.[activeTheme];
+      if (shot) preloadShot(shot.src);
+    };
+    button.addEventListener('pointerenter', warmModeShot);
+    button.addEventListener('focus', warmModeShot);
+    button.addEventListener('click', () => setNotchMode(button.dataset.shotMode));
+  });
+  document.querySelectorAll('.shot-theme').forEach((button) => {
+    const warmThemeShot = () => {
+      const shot = plannerShots[activeMode]?.[button.dataset.shotTheme];
+      if (shot) preloadShot(shot.src);
+    };
+    button.addEventListener('pointerenter', warmThemeShot);
+    button.addEventListener('focus', warmThemeShot);
+    button.addEventListener('click', () => setHeroTheme(button.dataset.shotTheme));
+  });
   document.querySelectorAll('.personality-select').forEach((button) => button.addEventListener('click', () => {
     setNotchMode(button.dataset.mode);
     document.querySelector('#notch-demo')?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
